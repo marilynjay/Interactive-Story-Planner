@@ -2,11 +2,11 @@
 
 A planner for branching, choose-your-path stories. Instead of trying to show the whole story at once, the map shows the part around where you are, like a mind map:
 
-- **Comes from** (left): scenes that lead into the current one
-- **You are here** (center): the scene you're working on
-- **1–3 steps ahead** (right): where the choices lead
+- **Comes from** (top): scenes that lead into the current one
+- **You are here**: the scene you're working on
+- **1–3 steps ahead** (below): where the choices lead
 
-Click any scene, or any choice label, to move there. Use **← Back** and **Forward →** (or Alt+←/→) to go back to where you just were, the same way a web browser does. The breadcrumb trail under the toolbar lets you jump several steps back at once.
+Tap any scene, or any choice label, to move there. Use **← Back** and **Forward →** (or Alt+←/→) to go back to where you just were, the same way a web browser does. The breadcrumb trail under the toolbar lets you jump several steps back at once.
 
 ## Running it
 
@@ -19,7 +19,7 @@ Open `index.html` in a browser. It needs no install and no server.
 - **"+N" badges**: a scene with connections that don't fit on screen gets a "+N ›" badge. Click the scene to go there and see them.
 - **Loops** (choices that lead back to an earlier scene) appear as dashed amber arcs marked ↺.
 - **Jump to a scene**: the dropdown lists every scene and flags the start, the endings, and any **unreachable** scenes (scenes no path leads to).
-- **Pan and zoom**: drag the map to pan and scroll to zoom. ◎ re-centers the map.
+- **Pan and zoom**: drag the map to pan, and scroll or pinch to zoom. ◎ re-centers the map.
 - **Saving**: your work saves automatically in the browser. **Export** downloads the story as JSON and **Import** loads it back. Export regularly to keep a backup.
 
 ## Story file format

@@ -18,18 +18,18 @@
   <header class="topbar">
     <input id="storyTitle" class="story-title" aria-label="Story title" spellcheck="false">
     <div class="nav-buttons">
-      <button id="backBtn" title="Back (Alt+←)">← Back</button>
-      <button id="fwdBtn" title="Forward (Alt+→)">Forward →</button>
-      <button id="startBtn" title="Jump to the start scene">⌂ Start</button>
+      <button id="backBtn" title="Back (Alt+←)" aria-label="Back">←<span class="lbl"> Back</span></button>
+      <button id="fwdBtn" title="Forward (Alt+→)" aria-label="Forward"><span class="lbl">Forward </span>→</button>
+      <button id="startBtn" title="Jump to the start scene" aria-label="Start">⌂<span class="lbl"> Start</span></button>
     </div>
     <select id="jumpSelect" aria-label="Jump to scene"></select>
-    <label class="depth">Show
-      <select id="depthSelect">
+    <label class="depth"><span class="lbl">Show</span>
+      <select id="depthSelect" aria-label="How many steps ahead to show">
         <option value="1">1 step</option>
         <option value="2" selected>2 steps</option>
         <option value="3">3 steps</option>
       </select>
-      ahead
+      <span class="lbl">ahead</span>
     </label>
     <div class="file-buttons">
       <button id="newBtn">New</button>
@@ -54,7 +54,7 @@
         </defs>
         <g id="camera"></g>
       </svg>
-      <div class="map-hint">Click a scene to go there · drag to pan · scroll or pinch to zoom</div>
+      <div class="map-hint">Tap a scene to go there · drag to pan · scroll or pinch to zoom</div>
       <button id="recenterBtn" class="recenter" title="Re-center on current scene">◎</button>
     </section>
 

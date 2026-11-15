@@ -10,14 +10,13 @@
   'use strict';
 
   const STORAGE_KEY = 'storyPlanner.v1';
-  const NODE_W = 200;
-  const NODE_H = 66;
-  const COL_GAP = 130;   // horizontal room between columns (for choice labels)
-  const ROW_GAP = 22;
-  const COL = NODE_W + COL_GAP;
-  const ROW = NODE_H + ROW_GAP;
+  const NODE_W = 164;
+  const NODE_H = 62;
+  const SIB_GAP = 22;    // horizontal space between scenes side by side
+  const STEP_GAP = 92;   // vertical space between steps (room for choice labels)
+  const COL = NODE_W + SIB_GAP;
+  const ROW = NODE_H + STEP_GAP;
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const XHTML_NS = 'http://www.w3.org/1999/xhtml';
 
   // ---------- State ----------
   let story;
@@ -42,7 +41,7 @@
   const truncate = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);
 
   function el(tag, attrs = {}, children = []) {
-    const isSvg = ['svg', 'g', 'path', 'rect', 'text', 'foreignObject', 'title'].includes(tag);
+    const isSvg = ['svg', 'g', 'path', 'rect', 'text', 'tspan', 'title'].includes(tag);
     const node = isSvg ? document.createElementNS(SVG_NS, tag) : document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
       if (v == null || v === false) continue;
@@ -154,8 +153,8 @@
   }
 
   // ---------- Layout ----------
-  // Builds a small tree around the current scene: scenes that lead in (left),
-  // the current scene, and up to `depth` steps of choices ahead (right).
+  // Builds a small tree around the current scene, top to bottom: scenes that
+  // lead in (above), the current scene, and up to `depth` steps of choices (below).
   function computeLayout() {
     const level = new Map([[currentId, 0]]);
     const treeKids = new Map();
@@ -180,27 +179,28 @@
       frontier = next;
     }
 
-    // Vertical placement: leaves stack top to bottom, parents center on their kids.
-    const ys = new Map();
+    // Horizontal placement: the last step's scenes sit side by side, and each
+    // scene centers itself over the scenes its choices lead to.
+    const xs = new Map();
     let slot = 0;
     const place = (id) => {
       const kids = treeKids.get(id) || [];
-      if (!kids.length) { ys.set(id, slot++ * ROW); return; }
+      if (!kids.length) { xs.set(id, slot++ * COL); return; }
       kids.forEach(place);
-      ys.set(id, (ys.get(kids[0]) + ys.get(kids[kids.length - 1])) / 2);
+      xs.set(id, (xs.get(kids[0]) + xs.get(kids[kids.length - 1])) / 2);
     };
     place(currentId);
-    const shift = ys.get(currentId);
+    const shift = xs.get(currentId);
 
     const pos = new Map();
     for (const id of order) {
-      pos.set(id, { x: level.get(id) * COL, y: ys.get(id) - shift, level: level.get(id) });
+      pos.set(id, { x: xs.get(id) - shift, y: level.get(id) * ROW, level: level.get(id) });
     }
 
-    // Scenes leading into the current one, placed in a column on the left.
+    // Scenes leading into the current one, in a row above it.
     const parents = incomingTo(currentId).filter((id) => !pos.has(id));
     parents.forEach((id, i) => {
-      pos.set(id, { x: -COL, y: (i - (parents.length - 1) / 2) * ROW, level: -1 });
+      pos.set(id, { x: (i - (parents.length - 1) / 2) * COL, y: -ROW * 0.85, level: -1 });
     });
 
     return { pos, parents, treeParent };
@@ -208,7 +208,7 @@
 
   // ---------- Map rendering ----------
   function renderMap() {
-    const { pos, parents, treeParent } = computeLayout();
+    const { pos, treeParent } = computeLayout();
     positions = pos;
     camera.replaceChildren();
 
@@ -217,18 +217,10 @@
     const nodeLayer = el('g');
     camera.append(edgeLayer, nodeLayer, labelLayer);
 
-    // Column headers
-    const levels = new Set([...pos.values()].map((p) => p.level));
-    const minY = Math.min(...[...pos.values()].map((p) => p.y));
-    const headers = { '-1': 'Comes from', 0: 'You are here', 1: '1 step ahead', 2: '2 steps ahead', 3: '3 steps ahead' };
-    for (const lv of levels) {
-      edgeLayer.append(el('text', { class: 'col-label', x: lv * COL + 4, y: minY - 18, text: headers[lv] }));
-    }
-
     // Edges. To keep the map readable, only these connections are drawn:
     //  - the branching tree itself, plus anything into or out of the current scene
-    //  - "merges" one column to the right
-    // Other links (loops between far-off scenes) are counted in the node's "+N" badge.
+    //  - "merges" into a scene one step further down
+    // Other links (loops between far-off scenes) are counted in the scene's "+N" badge.
     const notDrawn = new Map();
     for (const [id, p] of pos) {
       let hidden = 0;
@@ -244,49 +236,51 @@
       notDrawn.set(id, hidden);
     }
 
-    // Nodes
     for (const [id, p] of pos) nodeLayer.append(drawNode(id, p, notDrawn.get(id)));
   }
 
   function drawEdge(edgeLayer, labelLayer, fromId, p, choice, q, isTree) {
     const forward = q.level > p.level;
     const fromCurrent = fromId === currentId;
-    const toCurrentFromParent = p.level === -1;
+    const fromParentRow = p.level === -1;
     let d, lx, ly;
 
     if (forward) {
-      const x1 = p.x + NODE_W, y1 = p.y + NODE_H / 2;
-      const x2 = q.x, y2 = q.y + NODE_H / 2;
-      const dx = Math.max(40, (x2 - x1) / 2);
-      d = `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2 - 4},${y2}`;
-      // Label sits near the source end so labels from one scene line up neatly.
-      const t = q.level - p.level > 1 ? 0.5 : 0.42;
-      [lx, ly] = bezierPoint([x1, y1], [x1 + dx, y1], [x2 - dx, y2], [x2, y2], t);
+      // Bottom of one scene to the top of the next.
+      const x1 = p.x + NODE_W / 2, y1 = p.y + NODE_H;
+      const x2 = q.x + NODE_W / 2, y2 = q.y;
+      const dy = Math.max(30, (y2 - y1) / 2);
+      d = `M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2 - 4}`;
+      // Labels sit nearer the destination, where sibling lines have spread apart.
+      [lx, ly] = bezierPoint([x1, y1], [x1, y1 + dy], [x2, y2 - dy], [x2, y2], q.level - p.level > 1 ? 0.6 : 0.68);
     } else {
-      // Loops back to an earlier (or same-column) scene: arc over the top.
-      const x1 = p.x + NODE_W / 2, y1 = p.y;
-      const x2 = q.x + NODE_W / 2 + (x1 === q.x + NODE_W / 2 ? 30 : 0), y2 = q.y;
-      const lift = 60 + Math.abs(x1 - x2) * 0.12 + Math.abs(y1 - y2) * 0.2;
-      const top = Math.min(y1, y2) - lift;
-      d = `M${x1},${y1} C${x1},${top} ${x2},${top} ${x2},${y2 - 4}`;
-      [lx, ly] = bezierPoint([x1, y1], [x1, top], [x2, top], [x2, y2], 0.5);
+      // Loops back up to an earlier scene: arc around the side.
+      const right = p.x > q.x;
+      const sx = right ? p.x + NODE_W : p.x;
+      const ex = right ? q.x + NODE_W : q.x;
+      const y1 = p.y + NODE_H / 2, y2 = q.y + NODE_H / 2;
+      const bulge = (right ? 1 : -1) * (46 + Math.abs(y1 - y2) * 0.22);
+      const cx = right ? Math.max(sx, ex) + bulge : Math.min(sx, ex) + bulge;
+      d = `M${sx},${y1} C${cx},${y1} ${cx},${y2} ${ex + (right ? 4 : -4)},${y2}`;
+      [lx, ly] = bezierPoint([sx, y1], [cx, y1], [cx, y2], [ex, y2], 0.5);
     }
 
-    const cls = ['edge', forward ? '' : 'loop', forward && !isTree && !fromCurrent ? 'cross' : '', fromCurrent ? 'hot' : '', toCurrentFromParent ? 'incoming' : ''].join(' ');
+    const cls = ['edge', forward ? '' : 'loop', forward && !isTree && !fromCurrent ? 'cross' : '', fromCurrent ? 'hot' : '', fromParentRow ? 'incoming' : ''].join(' ');
     edgeLayer.append(el('path', { d, class: cls, 'marker-end': forward ? 'url(#arrow)' : 'url(#arrow-loop)' }));
 
-    if (toCurrentFromParent) return; // keep the left side uncluttered
+    // Keep it uncluttered: no labels on the "comes from" row or on thin merge lines.
+    if (fromParentRow || (forward && !isTree && !fromCurrent)) return;
     const label = (choice.label || '(unnamed choice)') + (forward ? '' : ' ↺');
-    const text = truncate(label, fromCurrent ? 24 : 18);
-    const w = text.length * 6.3 + 14;
+    const text = fitText(label, fromCurrent ? 150 : 128, LABEL_FONT);
+    const w = textWidth(text, LABEL_FONT) + 16;
     labelLayer.append(el('g', {
       class: 'edge-label' + (forward ? '' : ' loop'),
-      transform: `translate(${lx - w / 2},${ly - 10})`,
+      transform: `translate(${lx - w / 2},${ly - 11})`,
       onclick: (e) => { if (!wasDrag()) { e.stopPropagation(); navigate(choice.to); } },
     }, [
       el('title', {}, [document.createTextNode(`${label} → ${titleOf(choice.to)}`)]),
-      el('rect', { width: w, height: 20, rx: 10 }),
-      el('text', { x: w / 2, y: 14, 'text-anchor': 'middle', text }),
+      el('rect', { width: w, height: 22, rx: 11 }),
+      el('text', { x: w / 2, y: 15, 'text-anchor': 'middle', text }),
     ]));
   }
 
@@ -296,33 +290,71 @@
     return [f(0), f(1)];
   }
 
+  // Text measuring, so scene titles can wrap inside plain SVG boxes.
+  const FONT_STACK = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  const TITLE_FONT = `600 13px ${FONT_STACK}`;
+  const LABEL_FONT = `11.5px ${FONT_STACK}`;
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  function textWidth(text, font) {
+    measureCtx.font = font;
+    return measureCtx.measureText(text).width;
+  }
+  function fitText(text, maxW, font) {
+    if (textWidth(text, font) <= maxW) return text;
+    let t = text;
+    while (t.length > 1 && textWidth(t + '…', font) > maxW) t = t.slice(0, -1);
+    return t.trimEnd() + '…';
+  }
+  function wrapText(text, maxW, font, maxLines) {
+    const words = text.split(/\s+/).filter(Boolean);
+    const lines = [];
+    let line = '';
+    for (let i = 0; i < words.length; i++) {
+      const tryLine = line ? line + ' ' + words[i] : words[i];
+      if (textWidth(tryLine, font) <= maxW || !line) { line = tryLine; continue; }
+      lines.push(line);
+      line = words[i];
+      if (lines.length === maxLines - 1) {
+        line = words.slice(i).join(' ');
+        break;
+      }
+    }
+    if (line) lines.push(line);
+    return lines.map((l, i) => (i === lines.length - 1 ? fitText(l, maxW, font) : l));
+  }
+
   function drawNode(id, p, hidden) {
     const s = scene(id);
     const isStart = id === story.startId;
     const isEnding = s.choices.length === 0;
-    const classes = ['node', id === currentId ? 'current' : '', p.level === -1 ? 'parent' : ''].join(' ');
+    const isCurrent = id === currentId;
+    const classes = ['node', isCurrent ? 'current' : '', p.level === -1 ? 'parent' : ''].join(' ');
 
-    const card = document.createElementNS(XHTML_NS, 'div');
-    card.className = 'card';
-    if (isStart || isEnding) {
-      const tag = document.createElementNS(XHTML_NS, 'div');
-      tag.className = 'tag ' + (isStart ? 'start' : 'ending');
-      tag.textContent = isStart ? 'Start' : 'Ending';
-      card.append(tag);
-    }
-    const t = document.createElementNS(XHTML_NS, 'div');
-    t.className = 't';
-    t.textContent = s.title || 'Untitled scene';
-    card.append(t);
-    if (!isEnding) {
-      const sub = document.createElementNS(XHTML_NS, 'div');
-      sub.className = 's';
-      sub.textContent = `${s.choices.length} choice${s.choices.length === 1 ? '' : 's'}`;
-      card.append(sub);
-    }
+    const tags = [];
+    if (isCurrent) tags.push(['here', 'You are here']);
+    if (isStart) tags.push(['start', 'Start']);
+    if (isEnding) tags.push(['ending', 'Ending']);
+    const titleLines = wrapText(s.title || 'Untitled scene', NODE_W - 22, TITLE_FONT, 2);
+    const sub = isEnding ? '' : `${s.choices.length} choice${s.choices.length === 1 ? '' : 's'}`;
 
-    const fo = el('foreignObject', { width: NODE_W, height: NODE_H });
-    fo.append(card);
+    // Stack the pieces and center them vertically in the box.
+    const total = (tags.length ? 13 : 0) + titleLines.length * 16 + (sub ? 14 : 0);
+    let y = (NODE_H - total) / 2;
+    const parts = [el('rect', { class: 'box', width: NODE_W, height: NODE_H, rx: 11 })];
+    if (tags.length) {
+      const t = el('text', { class: 'tag', x: 11, y: y + 9 });
+      tags.forEach(([cls, label], i) => {
+        if (i) t.append(el('tspan', { class: 'tag-sep', text: ' · ' }));
+        t.append(el('tspan', { class: cls, text: label }));
+      });
+      parts.push(t);
+      y += 13;
+    }
+    for (const line of titleLines) {
+      parts.push(el('text', { class: 't', x: 11, y: y + 12, text: line }));
+      y += 16;
+    }
+    if (sub) parts.push(el('text', { class: 's', x: 11, y: y + 11, text: sub }));
 
     const g = el('g', {
       class: classes,
@@ -332,14 +364,14 @@
       'aria-label': `Go to scene: ${s.title || 'Untitled scene'}`,
       onclick: () => { if (!wasDrag()) navigate(id); },
       onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(id); } },
-    }, [el('title', {}, [document.createTextNode(s.text ? truncate(s.text, 200) : s.title)]), fo]);
+    }, [el('title', {}, [document.createTextNode(s.text ? truncate(s.text, 200) : (s.title || 'Untitled scene'))]), ...parts]);
 
-    // "+N more" badge: choices that lead beyond what's on screen.
+    // "+N" badge: connections that lead beyond what's on screen.
     if (hidden > 0) {
       const label = `+${hidden} ›`;
       const w = label.length * 7 + 12;
-      g.append(el('g', { class: 'more-badge', transform: `translate(${NODE_W - w / 2},${-9})` }, [
-        el('title', {}, [document.createTextNode(`${hidden} more connection${hidden === 1 ? '' : 's'} not shown — click to go here and see them`)]),
+      g.append(el('g', { class: 'more-badge', transform: `translate(${NODE_W - w / 2 - 4},${-9})` }, [
+        el('title', {}, [document.createTextNode(`${hidden} more connection${hidden === 1 ? '' : 's'} not shown — tap to go here and see them`)]),
         el('rect', { width: w, height: 18, rx: 9 }),
         el('text', { x: w / 2, y: 13, 'text-anchor': 'middle', text: label }),
       ]));
@@ -355,14 +387,22 @@
   function targetCamera() {
     const rect = svg.getBoundingClientRect();
     const all = [...positions.values()];
-    const minX = Math.min(...all.map((p) => p.x)), maxX = Math.max(...all.map((p) => p.x)) + NODE_W;
-    const minY = Math.min(...all.map((p) => p.y)) - 40, maxY = Math.max(...all.map((p) => p.y)) + NODE_H;
-    const pad = 40;
-    const k = Math.max(0.45, Math.min(1, (rect.width - pad * 2) / (maxX - minX), (rect.height - pad * 2) / (maxY - minY)));
-    let x = rect.width / 2 - k * (minX + maxX) / 2;
-    let y = rect.height / 2 - k * (minY + maxY) / 2;
-    // Never let the current scene end up off screen.
+    const side = 50; // room for loop arcs beside the outermost scenes
+    const minX = Math.min(...all.map((p) => p.x)) - side, maxX = Math.max(...all.map((p) => p.x)) + NODE_W + side;
+    const minY = Math.min(...all.map((p) => p.y)) - 14, maxY = Math.max(...all.map((p) => p.y)) + NODE_H;
+    const narrow = rect.width < 600;
+    const pad = narrow ? 12 : 32;
+    // Zoom to fit, but not so far out that text becomes unreadable (on a phone,
+    // wide maps stay readable and you swipe sideways to see the rest).
+    const minK = narrow ? 0.62 : 0.5;
+    const fitK = Math.min((rect.width - pad * 2) / (maxX - minX), (rect.height - pad * 2) / (maxY - minY));
+    const k = Math.max(minK, Math.min(1, fitK));
     const cur = positions.get(currentId);
+    // Center the whole map if it fits across; otherwise center on the current scene.
+    const fitsAcross = k * (maxX - minX) <= rect.width - pad * 2;
+    let x = fitsAcross ? rect.width / 2 - k * (minX + maxX) / 2 : rect.width / 2 - k * (cur.x + NODE_W / 2);
+    let y = (k * (maxY - minY) <= rect.height - pad * 2) ? rect.height / 2 - k * (minY + maxY) / 2 : pad - k * minY;
+    // Never let the current scene end up off screen.
     const cx = x + k * cur.x, cy = y + k * cur.y;
     if (cx < pad) x += pad - cx;
     if (cx + k * NODE_W > rect.width - pad) x -= cx + k * NODE_W - (rect.width - pad);
