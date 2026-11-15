@@ -393,23 +393,58 @@
     if (animate) animateCamera(t); else { Object.assign(cam, t); applyCamera(); }
   }
 
-  // Dragging / zooming
+  // Dragging / zooming. One finger (or mouse) pans; two fingers pinch-zoom.
+  const pointers = new Map();   // pointerId -> {x, y}
   let drag = null;
+  let pinch = null;
   let lastDragMoved = false;
   const wasDrag = () => lastDragMoved;
 
+  function zoomAt(mx, my, k) {
+    k = Math.max(0.25, Math.min(2.5, k));
+    cam.x = mx - (mx - cam.x) * (k / cam.k);
+    cam.y = my - (my - cam.y) * (k / cam.k);
+    cam.k = k;
+  }
+
+  function startPinch() {
+    const [a, b] = [...pointers.values()];
+    pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, k: cam.k, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, cx: cam.x, cy: cam.y };
+  }
+
   svg.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     cancelAnimationFrame(camAnim);
-    drag = { sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false, id: e.pointerId };
-    lastDragMoved = false;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      drag = { sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false, id: e.pointerId };
+      lastDragMoved = false;
+    } else if (pointers.size === 2) {
+      for (const id of pointers.keys()) { try { svg.setPointerCapture(id); } catch { /* pointer already gone */ } }
+      if (drag) drag.moved = true;  // a pinch is never a tap
+      startPinch();
+    }
   });
   svg.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pointers.size >= 2) {
+      const [a, b] = [...pointers.values()];
+      const rect = svg.getBoundingClientRect();
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      // Restore the camera from pinch start, move with the fingers' midpoint, then zoom around it.
+      cam.k = pinch.k;
+      cam.x = pinch.cx + (mx - pinch.mx);
+      cam.y = pinch.cy + (my - pinch.my);
+      zoomAt(mx - rect.left, my - rect.top, pinch.k * Math.hypot(a.x - b.x, a.y - b.y) / pinch.dist);
+      applyCamera();
+      return;
+    }
     if (!drag) return;
     const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-    if (!drag.moved && Math.hypot(dx, dy) > 4) {
+    if (!drag.moved && Math.hypot(dx, dy) > 6) {
       drag.moved = true;
-      svg.setPointerCapture(drag.id);
+      try { svg.setPointerCapture(drag.id); } catch { /* pointer already gone */ }
       svg.classList.add('dragging');
     }
     if (drag.moved) {
@@ -418,23 +453,28 @@
       applyCamera();
     }
   });
-  const endDrag = () => {
-    if (!drag) return;
-    lastDragMoved = drag.moved;
-    svg.classList.remove('dragging');
-    drag = null;
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId);
+    if (pinch && pointers.size < 2) {
+      pinch = null;
+      // Keep panning smoothly with the finger that's still down.
+      const rest = [...pointers.entries()][0];
+      if (rest) drag = { sx: rest[1].x, sy: rest[1].y, cx: cam.x, cy: cam.y, moved: true, id: rest[0] };
+    }
+    if (pointers.size === 0 && drag) {
+      lastDragMoved = drag.moved;
+      svg.classList.remove('dragging');
+      drag = null;
+    }
   };
-  svg.addEventListener('pointerup', endDrag);
-  svg.addEventListener('pointercancel', endDrag);
+  svg.addEventListener('pointerup', endPointer);
+  svg.addEventListener('pointercancel', endPointer);
   svg.addEventListener('wheel', (e) => {
     e.preventDefault();
     cancelAnimationFrame(camAnim);
     const rect = svg.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    const k = Math.max(0.25, Math.min(2.5, cam.k * Math.exp(-e.deltaY * 0.0015)));
-    cam.x = mx - (mx - cam.x) * (k / cam.k);
-    cam.y = my - (my - cam.y) * (k / cam.k);
-    cam.k = k;
+    zoomAt(mx, my, cam.k * Math.exp(-e.deltaY * 0.0015));
     applyCamera();
   }, { passive: false });
 
