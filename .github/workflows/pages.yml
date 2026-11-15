@@ -24,7 +24,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - name: Collect site files
-        run: mkdir _site && cp index.html app.js styles.css icon.svg apple-touch-icon.png _site/
+        run: |
+          mkdir _site && cp index.html app.js styles.css icon.svg apple-touch-icon.png _site/
+          # Give each release's files a unique address so phones don't keep using an old copy.
+          v="${GITHUB_SHA::8}"
+          sed -i "s/styles\.css\"/styles.css?v=$v\"/; s/app\.js\"/app.js?v=$v\"/" _site/index.html
+          grep -E "\?v=$v" _site/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
