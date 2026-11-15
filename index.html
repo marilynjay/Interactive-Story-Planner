@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Story Planner</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <input id="storyTitle" class="story-title" aria-label="Story title" spellcheck="false">
+    <div class="nav-buttons">
+      <button id="backBtn" title="Back (Alt+←)">← Back</button>
+      <button id="fwdBtn" title="Forward (Alt+→)">Forward →</button>
+      <button id="startBtn" title="Jump to the start scene">⌂ Start</button>
+    </div>
+    <select id="jumpSelect" aria-label="Jump to scene"></select>
+    <label class="depth">Show
+      <select id="depthSelect">
+        <option value="1">1 step</option>
+        <option value="2" selected>2 steps</option>
+        <option value="3">3 steps</option>
+      </select>
+      ahead
+    </label>
+    <div class="file-buttons">
+      <button id="newBtn">New</button>
+      <button id="importBtn">Import</button>
+      <button id="exportBtn">Export</button>
+      <input id="importFile" type="file" accept=".json,application/json" hidden>
+    </div>
+  </header>
+
+  <nav id="trail" class="trail" aria-label="Where you've been"></nav>
+
+  <main class="layout">
+    <section class="map-wrap">
+      <svg id="map" role="img" aria-label="Story map">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="arrow-head"/>
+          </marker>
+          <marker id="arrow-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="arrow-head loop"/>
+          </marker>
+        </defs>
+        <g id="camera"></g>
+      </svg>
+      <div class="map-hint">Click a scene to go there · drag to pan · scroll to zoom</div>
+      <button id="recenterBtn" class="recenter" title="Re-center on current scene">◎</button>
+    </section>
+
+    <aside id="editor" class="editor"></aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
