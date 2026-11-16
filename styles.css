@@ -190,6 +190,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent-soft
   .file-buttons { order: 4; }
   .topbar button { padding: 6px 10px; }
   .map-hint { display: none; }
-  .depth { order: 5; margin-left: auto; }
+  .layout-btn { order: 5; margin-left: auto; }
+  .depth { order: 6; }
   .editor { width: 100%; border-left: none; border-top: 1px solid var(--line); }
 }

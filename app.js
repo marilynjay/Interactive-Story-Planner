@@ -12,10 +12,13 @@
   const STORAGE_KEY = 'storyPlanner.v1';
   const NODE_W = 164;
   const NODE_H = 62;
-  const SIB_GAP = 22;    // horizontal space between scenes side by side
-  const STEP_GAP = 92;   // vertical space between steps (room for choice labels)
-  const COL = NODE_W + SIB_GAP;
-  const ROW = NODE_H + STEP_GAP;
+  const LAYOUT_KEY = 'storyPlanner.layout';
+  // Spacing for each map direction. "main" runs from one step to the next
+  // (down in vertical view, right in horizontal); "cross" runs between sibling scenes.
+  const LAYOUTS = {
+    vertical:   { mainSize: NODE_H, crossSize: NODE_W, step: NODE_H + 92, sib: NODE_W + 22, labelT: [0.68, 0.6], labelW: [150, 128] },
+    horizontal: { mainSize: NODE_W, crossSize: NODE_H, step: NODE_W + 150, sib: NODE_H + 22, labelT: [0.42, 0.5], labelW: [132, 118] },
+  };
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
   // ---------- State ----------
@@ -24,6 +27,11 @@
   let backStack = [];
   let fwdStack = [];
   let depth = 2;
+  let layout = 'vertical';
+  try { if (LAYOUTS[localStorage.getItem(LAYOUT_KEY)]) layout = localStorage.getItem(LAYOUT_KEY); } catch { /* use default */ }
+  const L = () => LAYOUTS[layout];
+  // Turn a (main, cross) point into screen (x, y) for the current direction.
+  const xy = (m, c) => (layout === 'vertical' ? [c, m] : [m, c]);
   let positions = new Map();          // id -> {x, y} (top-left of node) in map coordinates
   const cam = { x: 0, y: 0, k: 1 };
   let camAnim = null;
@@ -153,8 +161,8 @@
   }
 
   // ---------- Layout ----------
-  // Builds a small tree around the current scene, top to bottom: scenes that
-  // lead in (above), the current scene, and up to `depth` steps of choices (below).
+  // Builds a small tree around the current scene: scenes that lead in (above,
+  // or left), the current scene, and up to `depth` steps of choices (below, or right).
   function computeLayout() {
     const level = new Map([[currentId, 0]]);
     const treeKids = new Map();
@@ -179,29 +187,32 @@
       frontier = next;
     }
 
-    // Horizontal placement: the last step's scenes sit side by side, and each
-    // scene centers itself over the scenes its choices lead to.
-    const xs = new Map();
+    // Sibling placement: the last step's scenes sit side by side, and each
+    // scene centers itself on the scenes its choices lead to.
+    const { step, sib } = L();
+    const cs = new Map();
     let slot = 0;
     const place = (id) => {
       const kids = treeKids.get(id) || [];
-      if (!kids.length) { xs.set(id, slot++ * COL); return; }
+      if (!kids.length) { cs.set(id, slot++ * sib); return; }
       kids.forEach(place);
-      xs.set(id, (xs.get(kids[0]) + xs.get(kids[kids.length - 1])) / 2);
+      cs.set(id, (cs.get(kids[0]) + cs.get(kids[kids.length - 1])) / 2);
     };
     place(currentId);
-    const shift = xs.get(currentId);
+    const shift = cs.get(currentId);
 
+    // Each position keeps m/c (main/cross) for drawing, plus x/y (top-left) for the camera.
     const pos = new Map();
-    for (const id of order) {
-      pos.set(id, { x: xs.get(id) - shift, y: level.get(id) * ROW, level: level.get(id) });
-    }
+    const put = (id, m, c, lv) => {
+      const [x, y] = xy(m, c);
+      pos.set(id, { m, c, x, y, level: lv });
+    };
+    for (const id of order) put(id, level.get(id) * step, cs.get(id) - shift, level.get(id));
 
-    // Scenes leading into the current one, in a row above it.
+    // Scenes leading into the current one, in a row above it (or a column to its left).
     const parents = incomingTo(currentId).filter((id) => !pos.has(id));
-    parents.forEach((id, i) => {
-      pos.set(id, { x: (i - (parents.length - 1) / 2) * COL, y: -ROW * 0.85, level: -1 });
-    });
+    const back = layout === 'vertical' ? step * 0.85 : step;
+    parents.forEach((id, i) => put(id, -back, (i - (parents.length - 1) / 2) * sib, -1));
 
     return { pos, parents, treeParent };
   }
@@ -245,24 +256,29 @@
     const fromParentRow = p.level === -1;
     let d, lx, ly;
 
+    const { mainSize: MS, crossSize: CS, labelT, labelW } = L();
     if (forward) {
-      // Bottom of one scene to the top of the next.
-      const x1 = p.x + NODE_W / 2, y1 = p.y + NODE_H;
-      const x2 = q.x + NODE_W / 2, y2 = q.y;
-      const dy = Math.max(30, (y2 - y1) / 2);
-      d = `M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2 - 4}`;
-      // Labels sit nearer the destination, where sibling lines have spread apart.
-      [lx, ly] = bezierPoint([x1, y1], [x1, y1 + dy], [x2, y2 - dy], [x2, y2], q.level - p.level > 1 ? 0.6 : 0.68);
+      // Far side of one scene to the near side of the next.
+      const m1 = p.m + MS, c1 = p.c + CS / 2;
+      const m2 = q.m, c2 = q.c + CS / 2;
+      const dm = Math.max(30, (m2 - m1) / 2);
+      const pts = [xy(m1, c1), xy(m1 + dm, c1), xy(m2 - dm, c2), xy(m2, c2)];
+      const end = xy(m2 - 4, c2);
+      d = `M${pts[0]} C${pts[1]} ${pts[2]} ${end}`;
+      // Labels sit where sibling lines have spread apart.
+      [lx, ly] = bezierPoint(...pts, q.level - p.level > 1 ? labelT[1] : labelT[0]);
     } else {
-      // Loops back up to an earlier scene: arc around the side.
-      const right = p.x > q.x;
-      const sx = right ? p.x + NODE_W : p.x;
-      const ex = right ? q.x + NODE_W : q.x;
-      const y1 = p.y + NODE_H / 2, y2 = q.y + NODE_H / 2;
-      const bulge = (right ? 1 : -1) * (46 + Math.abs(y1 - y2) * 0.22);
-      const cx = right ? Math.max(sx, ex) + bulge : Math.min(sx, ex) + bulge;
-      d = `M${sx},${y1} C${cx},${y1} ${cx},${y2} ${ex + (right ? 4 : -4)},${y2}`;
-      [lx, ly] = bezierPoint([sx, y1], [cx, y1], [cx, y2], [ex, y2], 0.5);
+      // Loops back to an earlier scene: arc around the outside.
+      const far = p.c > q.c;
+      const sc = far ? p.c + CS : p.c;
+      const ec = far ? q.c + CS : q.c;
+      const m1 = p.m + MS / 2, m2 = q.m + MS / 2;
+      const bulge = (far ? 1 : -1) * (46 + Math.abs(m1 - m2) * 0.22);
+      const cc = far ? Math.max(sc, ec) + bulge : Math.min(sc, ec) + bulge;
+      const pts = [xy(m1, sc), xy(m1, cc), xy(m2, cc), xy(m2, ec)];
+      const end = xy(m2, ec + (far ? 4 : -4));
+      d = `M${pts[0]} C${pts[1]} ${pts[2]} ${end}`;
+      [lx, ly] = bezierPoint(...pts, 0.5);
     }
 
     const cls = ['edge', forward ? '' : 'loop', forward && !isTree && !fromCurrent ? 'cross' : '', fromCurrent ? 'hot' : '', fromParentRow ? 'incoming' : ''].join(' ');
@@ -271,7 +287,7 @@
     // Keep it uncluttered: no labels on the "comes from" row or on thin merge lines.
     if (fromParentRow || (forward && !isTree && !fromCurrent)) return;
     const label = (choice.label || '(unnamed choice)') + (forward ? '' : ' ↺');
-    const text = fitText(label, fromCurrent ? 150 : 128, LABEL_FONT);
+    const text = fitText(label, fromCurrent ? labelW[0] : labelW[1], LABEL_FONT);
     const w = textWidth(text, LABEL_FONT) + 16;
     labelLayer.append(el('g', {
       class: 'edge-label' + (forward ? '' : ' loop'),
@@ -387,9 +403,10 @@
   function targetCamera() {
     const rect = svg.getBoundingClientRect();
     const all = [...positions.values()];
-    const side = 50; // room for loop arcs beside the outermost scenes
-    const minX = Math.min(...all.map((p) => p.x)) - side, maxX = Math.max(...all.map((p) => p.x)) + NODE_W + side;
-    const minY = Math.min(...all.map((p) => p.y)) - 14, maxY = Math.max(...all.map((p) => p.y)) + NODE_H;
+    // Leave room for loop arcs beside the outermost scenes, and for badges on top.
+    const [mx, my] = layout === 'vertical' ? [50, 14] : [14, 50];
+    const minX = Math.min(...all.map((p) => p.x)) - mx, maxX = Math.max(...all.map((p) => p.x)) + NODE_W + mx;
+    const minY = Math.min(...all.map((p) => p.y)) - my, maxY = Math.max(...all.map((p) => p.y)) + NODE_H + (my - 14);
     const narrow = rect.width < 600;
     const pad = narrow ? 12 : 32;
     // Zoom to fit, but not so far out that text becomes unreadable (on a phone,
@@ -398,9 +415,12 @@
     const fitK = Math.min((rect.width - pad * 2) / (maxX - minX), (rect.height - pad * 2) / (maxY - minY));
     const k = Math.max(minK, Math.min(1, fitK));
     const cur = positions.get(currentId);
-    // Center the whole map if it fits across; otherwise center on the current scene.
+    // Center the whole map if it fits across. Otherwise, in vertical view center on
+    // the current scene; in horizontal view start from the left edge, since the
+    // story flows rightward from there.
     const fitsAcross = k * (maxX - minX) <= rect.width - pad * 2;
-    let x = fitsAcross ? rect.width / 2 - k * (minX + maxX) / 2 : rect.width / 2 - k * (cur.x + NODE_W / 2);
+    let x = fitsAcross ? rect.width / 2 - k * (minX + maxX) / 2
+      : layout === 'vertical' ? rect.width / 2 - k * (cur.x + NODE_W / 2) : pad - k * minX;
     let y = (k * (maxY - minY) <= rect.height - pad * 2) ? rect.height / 2 - k * (minY + maxY) / 2 : pad - k * minY;
     // Never let the current scene end up off screen.
     const cx = x + k * cur.x, cy = y + k * cur.y;
@@ -752,6 +772,23 @@
   $('recenterBtn').onclick = () => recenter();
   $('jumpSelect').onchange = (e) => { if (e.target.value) navigate(e.target.value); };
   $('depthSelect').onchange = (e) => { depth = Number(e.target.value); renderMap(); recenter(); };
+
+  function updateLayoutButton() {
+    const btn = $('layoutBtn');
+    const vertical = layout === 'vertical';
+    btn.querySelector('.ico').textContent = vertical ? '↕' : '↔';
+    btn.querySelector('.lbl').textContent = vertical ? ' Vertical' : ' Horizontal';
+    btn.title = `Map runs ${vertical ? 'top to bottom' : 'left to right'} — tap to switch`;
+    btn.setAttribute('aria-label', `Map layout: ${vertical ? 'vertical' : 'horizontal'}. Switch layout`);
+  }
+  $('layoutBtn').onclick = () => {
+    layout = layout === 'vertical' ? 'horizontal' : 'vertical';
+    try { localStorage.setItem(LAYOUT_KEY, layout); } catch { /* not remembered */ }
+    updateLayoutButton();
+    renderMap();
+    recenter();
+  };
+  updateLayoutButton();
   $('storyTitle').oninput = (e) => { story.title = e.target.value; save(); document.title = `${story.title} — Story Planner`; };
 
   $('newBtn').onclick = () => {
